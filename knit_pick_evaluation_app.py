@@ -1,23 +1,21 @@
 import streamlit as st
+import json
 import uuid
 from datetime import datetime
 import os
 import random
 import gspread
 from google.oauth2.service_account import Credentials
-import json
 
 # --- 1. CONFIGURATION & STATE INITIALIZATION ---
 st.set_page_config(page_title="Knit Pick Eval", layout="wide")
 
-# Google Sheets Authentication setup
 @st.cache_resource
 def get_gspread_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # Pull credentials from Streamlit secrets
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"],
         scopes=scopes
@@ -31,11 +29,74 @@ if "session_id" not in st.session_state:
 if "current_step" not in st.session_state:
     st.session_state.current_step = 0
 
+if "profile_set" not in st.session_state:
+    st.session_state.profile_set = False
+
+# --- 2. ONBOARDING SCREEN ---
+# If they haven't set their profile, show this and stop the rest of the app from loading
+if not st.session_state.profile_set:
+    # Inject CSS to make the submit button bold and Blue instead of the default Streamlit Red
+    st.markdown("""
+        <style>
+        [data-testid="stForm"] button {
+            background-color: #1E88E5 !important;
+            color: white !important;
+            font-size: 18px !important;
+            font-weight: bold !important;
+            border-radius: 8px !important;
+            border: none !important;
+            padding: 10px !important;
+        }
+        [data-testid="stForm"] button:hover {
+            background-color: #1565C0 !important;
+        }
+        /* Make the slider text bigger and bolder */
+        .stSlider [data-testid="stTickBar"] span {
+            font-size: 16px !important;
+            font-weight: bold !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.title("Welcome to Knit Pick! 🧶")
+    st.markdown("### We need your help to evaluate our AI's fashion sense!")
+    st.write("Before we begin, please tell us a bit about yourself. This helps us analyze if the AI aligns better with certain demographics or styling experts.")
+    
+    with st.form("onboarding_form"):
+        st.markdown("#### 👤 Your Demographics")
+        gender = st.selectbox("**How do you identify?**", ["Female", "Male", "Non-binary", "Prefer not to say"])
+        
+        st.divider()
+        
+        st.markdown("#### 👗 Your Fashion Expertise")
+        expertise = st.select_slider(
+            "**How well do you know fashion?**", 
+            options=[
+                "1 - I just wear clothes", 
+                "2 - Casual interest", 
+                "3 - Pretty knowledgeable", 
+                "4 - Fashion enthusiast", 
+                "5 - Expert / Stylist"
+            ]
+        )
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        # Notice we removed type="primary" so our blue CSS takes over nicely
+        submitted = st.form_submit_button("Start Evaluation ➡️", use_container_width=True)
+        
+        if submitted:
+            st.session_state.user_gender = gender
+            # Extract just the number from the expertise string
+            st.session_state.user_expertise = int(expertise.split(" - ")[0])
+            st.session_state.profile_set = True
+            st.rerun() # Reload the page to show the main app
+            
+    st.stop() # Halts execution here until the form is submitted
+
+
+# --- 3. DATA LOADER ---
 @st.cache_data
 def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_anchor=5):
-    """
-    Reads model predictions from JSON. Limits candidates to prevent UI crowding.
-    """
     try:
         with open(json_path, 'r') as f:
             data = json.load(f)
@@ -44,7 +105,6 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
         st.stop()
         
     tasks = []
-    
     for anchor_id, anchor_data in data.items():
         raw_candidates = anchor_data.get("positives", []) + anchor_data.get("negatives", [])
         
@@ -56,15 +116,12 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
                 "model_score": float(c["score"])
             })
             
-        # Shuffle to mix positives and negatives
         random.shuffle(candidates)
-        
-        # Enforce the maximum limit so the UI doesn't get crushed
-        # This takes the first 5 from the newly shuffled list
         candidates = candidates[:max_candidates_per_anchor] 
         
         tasks.append({
             "anchor_id": str(anchor_id),
+            "anchor_type": str(anchor_data.get("anchor_type", "top")).lower(),
             "anchor_img": str(anchor_data.get("img_url", "")),
             "candidates": candidates
         })
@@ -74,30 +131,30 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
 
 tasks = load_evaluation_data()
 
-# --- 3. SUBMISSION LOGIC ---
+# --- 4. SUBMISSION LOGIC ---
 def save_ratings_and_advance():
-    current_task = tasks[st.session_state.current_step]
+    step = st.session_state.current_step
+    current_task = tasks[step]
     records = []
     
-    # Collect data for all 5 candidates
     for i, candidate in enumerate(current_task["candidates"]):
-        # st.feedback returns 0-4. We add 1 to make it a 1-5 scale.
-        # If user skips a rating, it returns None. We default to 3 (neutral) or you can enforce validation.
-        raw_rating = st.session_state.get(f"rating_{st.session_state.current_step}_{i}")
-        human_score = (raw_rating + 1) if raw_rating is not None else None 
+        dynamic_key = f"step_{step}_rating_{i}"
+        raw_rating = st.session_state.get(dynamic_key)
         
-        if human_score is not None:
-            # Append as a list of values for Google Sheets
-            records.append([
-                st.session_state.session_id,
-                current_task["anchor_id"],
-                candidate["id"],
-                human_score,
-                candidate["model_score"],
-                datetime.now().isoformat()
-            ])
+        # If raw_rating is None (no stars given), human_score becomes 0
+        human_score = (raw_rating + 1) if raw_rating is not None else 0 
+        
+        records.append([
+            st.session_state.session_id,
+            st.session_state.user_gender,     # ADDED GENDER
+            st.session_state.user_expertise,  # ADDED EXPERTISE
+            current_task["anchor_id"],
+            candidate["id"],
+            human_score,
+            candidate["model_score"],
+            datetime.now().isoformat()
+        ])
     
-    # Save to Google Sheets
     if records:
         try:
             client = get_gspread_client()
@@ -106,17 +163,16 @@ def save_ratings_and_advance():
             sheet.append_rows(records)
         except Exception as e:
             st.error(f"Error saving to Google Sheets: {e}")
-            return # Stop advancement so user data isn't lost
+            return 
     
-    # Clear the radio/feedback states for the next screen
     for i in range(len(current_task["candidates"])):
-        if f"rating_{i}" in st.session_state:
-            del st.session_state[f"rating_{i}"]
+        old_key = f"step_{step}_rating_{i}"
+        if old_key in st.session_state:
+            del st.session_state[old_key]
             
-    # Advance progress
     st.session_state.current_step += 1
 
-# --- 4. UI LAYOUT ---
+# --- 5. UI LAYOUT ---
 st.title("Knit Pick: Fashion Compatibility")
 
 if st.session_state.current_step >= len(tasks):
@@ -125,35 +181,33 @@ if st.session_state.current_step >= len(tasks):
     st.stop()
 
 current_task = tasks[st.session_state.current_step]
+step = st.session_state.current_step
 
-# Progress Bar
-progress = st.session_state.current_step / len(tasks)
-st.progress(progress, text=f"Task {st.session_state.current_step + 1} of {len(tasks)}")
+is_top = "top" in current_task["anchor_type"]
+anchor_name = "Top" if is_top else "Bottom"
+candidate_name = "bottoms" if is_top else "tops"
 
-st.markdown("### How well do these outfits match?")
+progress = step / len(tasks)
+st.progress(progress, text=f"Task {step + 1} of {len(tasks)}")
+
+st.markdown(f"### How well do these {candidate_name} match the {anchor_name.lower()}?")
 st.write("Rate each combination from 1 star (terrible match) to 5 stars (perfect outfit).")
 
-# Main Layout: 1 column for Anchor, 1 wide column containing a grid for Candidates
 col_anchor, col_candidates = st.columns([1, 3.5])
 
 with col_anchor:
-    st.markdown("**Anchor**")
+    st.markdown(f"**Anchor {anchor_name}**")
     st.image(current_task["anchor_img"], use_container_width=True)
     st.caption(f"ID: {current_task['anchor_id']}")
 
 with col_candidates:
     st.markdown("**Rate Candidates**")
-    # Create 5 sub-columns for the candidates
     cand_cols = st.columns(len(current_task["candidates"]))
     
     for i, (col, candidate) in enumerate(zip(cand_cols, current_task["candidates"])):
         with col:
             st.image(candidate["img"], use_container_width=True)
-            # The key binds the input to st.session_state so we can read it in the save function
-            st.feedback("stars", key=f"rating_{st.session_state.current_step}_{i}")
+            st.feedback("stars", key=f"step_{step}_rating_{i}")
 
 st.divider()
-
-# Submit Button
-# Using a button that calls the callback function ensures data is saved before the UI re-renders
 st.button("Submit & Next Outfit ➡️", on_click=save_ratings_and_advance, type="primary", use_container_width=True)
