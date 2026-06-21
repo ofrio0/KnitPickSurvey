@@ -73,6 +73,12 @@ st.markdown("""
         transform-origin: left center;
         padding-bottom: 10px;
     }
+    
+    /* Limit image height to prevent excessive scrolling */
+    [data-testid="stImage"] img {
+        max-height: 55vh !important;
+        object-fit: contain !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
