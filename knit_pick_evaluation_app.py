@@ -199,9 +199,10 @@ if st.session_state.current_step >= len(tasks):
 current_task = tasks[st.session_state.current_step]
 step = st.session_state.current_step
 
-is_top = "top" in current_task["anchor_type"]
-anchor_name = "Top" if is_top else "Bottom"
-candidate_name = "Bottom" if is_top else "Top"
+# Determine which image is the top and which is the bottom
+is_top = "top" in current_task["anchor_type"].lower()
+top_img = current_task["anchor_img"] if is_top else current_task["candidate_img"]
+bottom_img = current_task["candidate_img"] if is_top else current_task["anchor_img"]
 
 progress = step / len(tasks)
 st.progress(progress, text=f"Outfit {step + 1} of {len(tasks)}")
@@ -213,12 +214,12 @@ st.write("Rate the combination from 1 star (terrible match) to 5 stars (perfect 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown(f"**{anchor_name}**")
-    st.image(current_task["anchor_img"], use_container_width=True)
+    st.markdown("**Top**")
+    st.image(top_img, use_container_width=True)
 
 with col2:
-    st.markdown(f"**{candidate_name}**")
-    st.image(current_task["candidate_img"], use_container_width=True)
+    st.markdown("**Bottom**")
+    st.image(bottom_img, use_container_width=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("**Rate this Outfit:**")
