@@ -32,32 +32,53 @@ if "current_step" not in st.session_state:
 if "profile_set" not in st.session_state:
     st.session_state.profile_set = False
 
+# --- GLOBAL CSS INJECTION ---
+# Moved outside the onboarding block so it applies to the stars on the main page too!
+st.markdown("""
+    <style>
+    /* Submit buttons */
+    [data-testid="stForm"] button {
+        background-color: #1E88E5 !important;
+        color: white !important;
+        font-size: 18px !important;
+        font-weight: bold !important;
+        border-radius: 8px !important;
+        border: none !important;
+        padding: 10px !important;
+    }
+    [data-testid="stForm"] button:hover {
+        background-color: #1565C0 !important;
+    }
+    
+    /* ---- FASHION EXPERTISE SLIDER ENHANCEMENTS ---- */
+    /* 1. Make the slider options text bigger and extra bold */
+    .stSlider [data-testid="stTickBar"] span {
+        font-size: 18px !important;
+        font-weight: 900 !important;
+    }
+    /* 2. Make the question title above the slider bigger */
+    .stSlider [data-testid="stWidgetLabel"] p {
+        font-size: 20px !important;
+    }
+    /* 3. Make the draggable dot bigger for easier mobile tapping */
+    .stSlider [role="slider"] {
+        width: 24px !important;
+        height: 24px !important;
+    }
+    /* ----------------------------------------------- */
+    
+    /* Make the stars larger and keep them left-aligned */
+    div[data-testid="stFeedback"] {
+        transform: scale(2);
+        transform-origin: left center;
+        padding-bottom: 10px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- 2. ONBOARDING SCREEN ---
 # If they haven't set their profile, show this and stop the rest of the app from loading
 if not st.session_state.profile_set:
-    # Inject CSS to make the submit button bold and Blue instead of the default Streamlit Red
-    st.markdown("""
-        <style>
-        [data-testid="stForm"] button {
-            background-color: #1E88E5 !important;
-            color: white !important;
-            font-size: 18px !important;
-            font-weight: bold !important;
-            border-radius: 8px !important;
-            border: none !important;
-            padding: 10px !important;
-        }
-        [data-testid="stForm"] button:hover {
-            background-color: #1565C0 !important;
-        }
-        /* Make the slider text bigger and bolder */
-        .stSlider [data-testid="stTickBar"] span {
-            font-size: 16px !important;
-            font-weight: bold !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
     st.title("Welcome to Knit Pick! 🧶")
     st.markdown("### We need your help to evaluate our AI's fashion sense!")
     st.write("Before we begin, please tell us a bit about yourself. This helps us analyze if the AI aligns better with certain demographics or styling experts.")
@@ -201,24 +222,7 @@ with col2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("**Rate this Outfit:**")
-
-
 # The dynamic key guarantees fresh stars on every page
-st.markdown("""
-<style>
-/* Center the stars */
-[data-testid="stFeedback"] {
-    justify-content: center !important;
-}
-
-/* Make stars bigger */
-[data-testid="stFeedback"] button {
-    transform: scale(2);
-    margin: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
-
 st.feedback("stars", key=f"step_{step}_rating")
 
 st.divider()
