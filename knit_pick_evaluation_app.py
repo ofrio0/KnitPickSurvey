@@ -201,7 +201,24 @@ with col2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("**Rate this Outfit:**")
+
+
 # The dynamic key guarantees fresh stars on every page
+st.markdown("""
+<style>
+/* Center the stars */
+[data-testid="stFeedback"] {
+    justify-content: center !important;
+}
+
+/* Make stars bigger */
+[data-testid="stFeedback"] button {
+    transform: scale(2);
+    margin: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.feedback("stars", key=f"step_{step}_rating")
 
 st.divider()
