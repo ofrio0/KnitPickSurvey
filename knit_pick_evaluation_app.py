@@ -81,17 +81,15 @@ if not st.session_state.profile_set:
         )
         
         st.markdown("<br>", unsafe_allow_html=True)
-        # Notice we removed type="primary" so our blue CSS takes over nicely
         submitted = st.form_submit_button("Start Evaluation ➡️", use_container_width=True)
         
         if submitted:
             st.session_state.user_gender = gender
-            # Extract just the number from the expertise string
             st.session_state.user_expertise = int(expertise.split(" - ")[0])
             st.session_state.profile_set = True
-            st.rerun() # Reload the page to show the main app
+            st.rerun() 
             
-    st.stop() # Halts execution here until the form is submitted
+    st.stop() 
 
 
 # --- 3. DATA LOADER ---
@@ -105,27 +103,28 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
         st.stop()
         
     tasks = []
+    
     for anchor_id, anchor_data in data.items():
         raw_candidates = anchor_data.get("positives", []) + anchor_data.get("negatives", [])
+        anchor_type = str(anchor_data.get("anchor_type", "top")).lower()
+        anchor_img = str(anchor_data.get("img_url", ""))
         
-        candidates = []
-        for c in raw_candidates:
-            candidates.append({
-                "id": str(c["id"]),
-                "img": str(c["img_url"]),
+        # Shuffle candidates so we don't grab just positives if we limit them
+        random.shuffle(raw_candidates)
+        limited_candidates = raw_candidates[:max_candidates_per_anchor]
+        
+        # FLATTEN THE LIST: Every candidate becomes its own independent task
+        for c in limited_candidates:
+            tasks.append({
+                "anchor_id": str(anchor_id),
+                "anchor_type": anchor_type,
+                "anchor_img": anchor_img,
+                "candidate_id": str(c["id"]),
+                "candidate_img": str(c["img_url"]),
                 "model_score": float(c["score"])
             })
             
-        random.shuffle(candidates)
-        candidates = candidates[:max_candidates_per_anchor] 
-        
-        tasks.append({
-            "anchor_id": str(anchor_id),
-            "anchor_type": str(anchor_data.get("anchor_type", "top")).lower(),
-            "anchor_img": str(anchor_data.get("img_url", "")),
-            "candidates": candidates
-        })
-        
+    # Shuffle the entire flattened list so users see a completely random mix of outfits
     random.shuffle(tasks)
     return tasks
 
@@ -135,40 +134,36 @@ tasks = load_evaluation_data()
 def save_ratings_and_advance():
     step = st.session_state.current_step
     current_task = tasks[step]
-    records = []
     
-    for i, candidate in enumerate(current_task["candidates"]):
-        dynamic_key = f"step_{step}_rating_{i}"
-        raw_rating = st.session_state.get(dynamic_key)
-        
-        # If raw_rating is None (no stars given), human_score becomes 0
-        human_score = (raw_rating + 1) if raw_rating is not None else 0 
-        
-        records.append([
-            st.session_state.session_id,
-            st.session_state.user_gender,     # ADDED GENDER
-            st.session_state.user_expertise,  # ADDED EXPERTISE
-            current_task["anchor_id"],
-            candidate["id"],
-            human_score,
-            candidate["model_score"],
-            datetime.now().isoformat()
-        ])
+    dynamic_key = f"step_{step}_rating"
+    raw_rating = st.session_state.get(dynamic_key)
     
-    if records:
-        try:
-            client = get_gspread_client()
-            sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
-            sheet = client.open_by_url(sheet_url).sheet1
-            sheet.append_rows(records)
-        except Exception as e:
-            st.error(f"Error saving to Google Sheets: {e}")
-            return 
+    # If raw_rating is None (no stars given), human_score becomes 0
+    human_score = (raw_rating + 1) if raw_rating is not None else 0 
     
-    for i in range(len(current_task["candidates"])):
-        old_key = f"step_{step}_rating_{i}"
-        if old_key in st.session_state:
-            del st.session_state[old_key]
+    record = [
+        st.session_state.session_id,
+        st.session_state.user_gender,     
+        st.session_state.user_expertise,  
+        current_task["anchor_id"],
+        current_task["candidate_id"],
+        human_score,
+        current_task["model_score"],
+        datetime.now().isoformat()
+    ]
+    
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
+        sheet = client.open_by_url(sheet_url).sheet1
+        # append_rows expects a list of lists
+        sheet.append_rows([record])
+    except Exception as e:
+        st.error(f"Error saving to Google Sheets: {e}")
+        return 
+    
+    if dynamic_key in st.session_state:
+        del st.session_state[dynamic_key]
             
     st.session_state.current_step += 1
 
@@ -185,29 +180,29 @@ step = st.session_state.current_step
 
 is_top = "top" in current_task["anchor_type"]
 anchor_name = "Top" if is_top else "Bottom"
-candidate_name = "bottoms" if is_top else "tops"
+candidate_name = "Bottom" if is_top else "Top"
 
 progress = step / len(tasks)
-st.progress(progress, text=f"Task {step + 1} of {len(tasks)}")
+st.progress(progress, text=f"Outfit {step + 1} of {len(tasks)}")
 
-st.markdown(f"### How well do these {candidate_name} match the {anchor_name.lower()}?")
-st.write("Rate each combination from 1 star (terrible match) to 5 stars (perfect outfit).")
+st.markdown("### How well does this outfit go together?")
+st.write("Rate the combination from 1 star (terrible match) to 5 stars (perfect outfit).")
 
-col_anchor, col_candidates = st.columns([1, 3.5])
+# Display exactly two columns side-by-side
+col1, col2 = st.columns(2)
 
-with col_anchor:
-    st.markdown(f"**Anchor {anchor_name}**")
+with col1:
+    st.markdown(f"**{anchor_name}**")
     st.image(current_task["anchor_img"], use_container_width=True)
-    st.caption(f"ID: {current_task['anchor_id']}")
 
-with col_candidates:
-    st.markdown("**Rate Candidates**")
-    cand_cols = st.columns(len(current_task["candidates"]))
-    
-    for i, (col, candidate) in enumerate(zip(cand_cols, current_task["candidates"])):
-        with col:
-            st.image(candidate["img"], use_container_width=True)
-            st.feedback("stars", key=f"step_{step}_rating_{i}")
+with col2:
+    st.markdown(f"**{candidate_name}**")
+    st.image(current_task["candidate_img"], use_container_width=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("**Rate this Outfit:**")
+# The dynamic key guarantees fresh stars on every page
+st.feedback("stars", key=f"step_{step}_rating")
 
 st.divider()
 st.button("Submit & Next Outfit ➡️", on_click=save_ratings_and_advance, type="primary", use_container_width=True)
