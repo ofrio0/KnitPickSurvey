@@ -151,16 +151,21 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
                 "model_score": float(c["score"])
             })
             
-    # Shuffle the entire flattened list so users see a completely random mix of outfits
-    random.shuffle(tasks)
     return tasks
 
-tasks = load_evaluation_data()
+base_tasks = load_evaluation_data()
+
+# Create a uniquely shuffled list of tasks for this specific user session
+if "session_tasks" not in st.session_state:
+    user_tasks = list(base_tasks)
+    random.shuffle(user_tasks)
+    st.session_state.session_tasks = user_tasks
 
 # --- 4. SUBMISSION LOGIC ---
 def save_ratings_and_advance():
     step = st.session_state.current_step
-    current_task = tasks[step]
+    # Read from the uniquely shuffled session list
+    current_task = st.session_state.session_tasks[step]
     
     dynamic_key = f"step_{step}_rating"
     raw_rating = st.session_state.get(dynamic_key)
@@ -197,12 +202,13 @@ def save_ratings_and_advance():
 # --- 5. UI LAYOUT ---
 st.title("Knit Pick: Fashion Compatibility")
 
-if st.session_state.current_step >= len(tasks):
+if st.session_state.current_step >= len(st.session_state.session_tasks):
     st.success("You've completed all evaluations! Thank you for your help.")
     st.balloons()
     st.stop()
 
-current_task = tasks[st.session_state.current_step]
+# Load the current task from the uniquely shuffled session list
+current_task = st.session_state.session_tasks[st.session_state.current_step]
 step = st.session_state.current_step
 
 # Determine which image is the top and which is the bottom
@@ -210,8 +216,8 @@ is_top = "top" in current_task["anchor_type"].lower()
 top_img = current_task["anchor_img"] if is_top else current_task["candidate_img"]
 bottom_img = current_task["candidate_img"] if is_top else current_task["anchor_img"]
 
-progress = step / len(tasks)
-st.progress(progress, text=f"Outfit {step + 1} of {len(tasks)}")
+progress = step / len(st.session_state.session_tasks)
+st.progress(progress, text=f"Outfit {step + 1} of {len(st.session_state.session_tasks)}")
 
 st.markdown("### How well does this outfit go together?")
 st.write("Rate the combination from 1 star (terrible match) to 5 stars (perfect outfit).")
