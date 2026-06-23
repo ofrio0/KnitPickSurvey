@@ -10,6 +10,12 @@ from google.oauth2.service_account import Credentials
 # --- 1. CONFIGURATION & STATE INITIALIZATION ---
 st.set_page_config(page_title="הערכת Knit Pick", layout="wide")
 
+# --- BATCH SIZE TUNING ---
+# 1 = Saves every time (High risk of API crash if >5 users at once)
+# 3 = Sweet spot (Safe for ~15-20 simultaneous users, max 2 lost ratings if they quit)
+# 5+ = Very safe for high traffic, but higher risk of losing unsubmitted ratings
+BATCH_SIZE = 2
+
 @st.cache_resource
 def get_gspread_client():
     scopes = [
@@ -31,6 +37,10 @@ if "current_step" not in st.session_state:
 
 if "profile_set" not in st.session_state:
     st.session_state.profile_set = False
+
+# This holds ratings temporarily so we don't spam Google Sheets
+if "pending_records" not in st.session_state:
+    st.session_state.pending_records = []
 
 # --- GLOBAL CSS INJECTION ---
 st.markdown("""
@@ -62,29 +72,25 @@ st.markdown("""
     }
     
     /* ---- FASHION EXPERTISE SLIDER ENHANCEMENTS ---- */
-    /* 1. Make the slider options text bigger and extra bold */
     .stSlider [data-testid="stTickBar"] span {
         font-size: 16px !important;
         font-weight: 900 !important;
         direction: rtl !important;
     }
-    /* 2. Make the question title above the slider bigger */
     .stSlider [data-testid="stWidgetLabel"] p {
         font-size: 20px !important;
     }
-    /* 3. Make the draggable dot bigger for easier mobile tapping */
     .stSlider [role="slider"] {
         width: 24px !important;
         height: 24px !important;
     }
-    /* ----------------------------------------------- */
     
     /* Make the stars larger but leave their alignment natural */
     div[data-testid="stFeedback"] {
         transform: scale(2);
         transform-origin: left center;
         padding-bottom: 10px;
-        direction: ltr; /* Keeps the stars functionally left-to-right 1 to 5 */
+        direction: ltr;
     }
     
     /* Limit image height to prevent excessive scrolling */
@@ -123,7 +129,6 @@ if not st.session_state.profile_set:
         submitted = st.form_submit_button("התחלת ההערכה ⬅️", use_container_width=True)
         
         if submitted:
-            # Map Hebrew input to English output for the Google Sheet
             gender_mapping = {
                 "אישה": "Female",
                 "גבר": "Male",
@@ -178,7 +183,7 @@ if "session_tasks" not in st.session_state:
     random.shuffle(user_tasks)
     st.session_state.session_tasks = user_tasks
 
-# --- 4. SUBMISSION LOGIC ---
+# --- 4. SUBMISSION LOGIC (BATCHED) ---
 def save_ratings_and_advance():
     step = st.session_state.current_step
     current_task = st.session_state.session_tasks[step]
@@ -199,14 +204,28 @@ def save_ratings_and_advance():
         datetime.now().isoformat()
     ]
     
-    try:
-        client = get_gspread_client()
-        sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
-        sheet = client.open_by_url(sheet_url).sheet1
-        sheet.append_rows([record])
-    except Exception as e:
-        st.error(f"שגיאה בשמירה ל-Google Sheets: {e}")
-        return 
+    # 1. Add record to pending batch instead of uploading immediately
+    st.session_state.pending_records.append(record)
+    
+    is_last_step = st.session_state.current_step >= len(st.session_state.session_tasks) - 1
+    
+    # 2. Only upload if we hit our BATCH_SIZE limit OR it's the absolute last step
+    if len(st.session_state.pending_records) >= BATCH_SIZE or is_last_step:
+        try:
+            client = get_gspread_client()
+            sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
+            sheet = client.open_by_url(sheet_url).sheet1
+            
+            # Send the whole batch at once
+            sheet.append_rows(st.session_state.pending_records)
+            
+            # Clear the batch ONLY if the upload was successful
+            st.session_state.pending_records = [] 
+            
+        except Exception as e:
+            # If Google Sheets rejects it (rate limit), don't crash. 
+            # We keep the data in pending_records and it will try again on the next click.
+            st.toast("שמירה בוטלה זמנית עקב עומס, הנתונים נשמרו ויגובו בשלב הבא.", icon="⏳")
     
     if dynamic_key in st.session_state:
         del st.session_state[dynamic_key]
@@ -218,6 +237,17 @@ st.title("Knit Pick: התאמת אופנה")
 
 if st.session_state.current_step >= len(st.session_state.session_tasks):
     st.success("סיימת את כל ההערכות! תודה רבה על העזרה.")
+    
+    # Final check just to be absolutely sure no records are left behind
+    if len(st.session_state.pending_records) > 0:
+        try:
+            client = get_gspread_client()
+            sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
+            client.open_by_url(sheet_url).sheet1.append_rows(st.session_state.pending_records)
+            st.session_state.pending_records = []
+        except:
+            pass # App is over anyway
+            
     st.balloons()
     st.stop()
 
@@ -230,7 +260,6 @@ bottom_img = current_task["candidate_img"] if is_top else current_task["anchor_i
 
 progress = step / len(st.session_state.session_tasks)
 
-# Friendly message showing how many they've done and encouraging them
 progress_text = f"דירגתם עד כה: {step} שילובים | אפשר לעצור מתי שתרצו, אבל נשמח אם תדרגו כמה שיותר!"
 st.progress(progress, text=progress_text)
 
