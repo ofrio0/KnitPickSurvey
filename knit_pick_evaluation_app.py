@@ -84,8 +84,6 @@ st.markdown("""
         transform: scale(2);
         transform-origin: left center;
         padding-bottom: 10px;
-        padding-left: 20%;
-        padding-right: 20%;
         direction: ltr; /* Keeps the stars functionally left-to-right 1 to 5 */
     }
     
