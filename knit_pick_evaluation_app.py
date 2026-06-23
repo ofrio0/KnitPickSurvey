@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- 1. CONFIGURATION & STATE INITIALIZATION ---
-st.set_page_config(page_title="Knit Pick Eval", layout="wide")
+st.set_page_config(page_title="הערכת Knit Pick", layout="wide")
 
 @st.cache_resource
 def get_gspread_client():
@@ -33,11 +33,21 @@ if "profile_set" not in st.session_state:
     st.session_state.profile_set = False
 
 # --- GLOBAL CSS INJECTION ---
-# Moved outside the onboarding block so it applies to the stars on the main page too!
 st.markdown("""
     <style>
+    /* ---- RTL AND HEBREW ALIGNMENT ---- */
+    .stMarkdown, .stText, p, h1, h2, h3, h4, h5, h6, label[data-testid="stWidgetLabel"] {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+    
+    /* Align the text inside the selectbox */
+    div[data-baseweb="select"] {
+        direction: rtl !important;
+    }
+    
     /* Submit buttons */
-    [data-testid="stForm"] button {
+    [data-testid="stForm"] button, .stButton button {
         background-color: #1E88E5 !important;
         color: white !important;
         font-size: 18px !important;
@@ -45,16 +55,18 @@ st.markdown("""
         border-radius: 8px !important;
         border: none !important;
         padding: 10px !important;
+        direction: rtl !important;
     }
-    [data-testid="stForm"] button:hover {
+    [data-testid="stForm"] button:hover, .stButton button:hover {
         background-color: #1565C0 !important;
     }
     
     /* ---- FASHION EXPERTISE SLIDER ENHANCEMENTS ---- */
     /* 1. Make the slider options text bigger and extra bold */
     .stSlider [data-testid="stTickBar"] span {
-        font-size: 18px !important;
+        font-size: 16px !important;
         font-weight: 900 !important;
+        direction: rtl !important;
     }
     /* 2. Make the question title above the slider bigger */
     .stSlider [data-testid="stWidgetLabel"] p {
@@ -67,11 +79,14 @@ st.markdown("""
     }
     /* ----------------------------------------------- */
     
-    /* Make the stars larger and keep them left-aligned */
+    /* Make the stars larger but leave their alignment natural */
     div[data-testid="stFeedback"] {
         transform: scale(2);
         transform-origin: left center;
         padding-bottom: 10px;
+        padding-left: 20%;
+        padding-right: 20%;
+        direction: ltr; /* Keeps the stars functionally left-to-right 1 to 5 */
     }
     
     /* Limit image height to prevent excessive scrolling */
@@ -83,35 +98,42 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 2. ONBOARDING SCREEN ---
-# If they haven't set their profile, show this and stop the rest of the app from loading
 if not st.session_state.profile_set:
-    st.title("Welcome to Knit Pick! 🧶")
-    st.markdown("### We need your help to evaluate our AI's fashion sense!")
-    st.write("Before we begin, please tell us a bit about yourself. This helps us analyze if the AI aligns better with certain demographics or styling experts.")
+    st.title("ברוכים הבאים ל-Knit Pick! 🧶")
+    st.markdown("### אנחנו צריכים את עזרתכם בהערכת חוש האופנה של ה-AI שלנו!")
+    st.write("לפני שנתחיל, ספרו לנו קצת על עצמכם. זה יעזור לנו להבין אם המודל מתאים יותר לקהלים מסוימים או למומחי אופנה.")
     
     with st.form("onboarding_form"):
-        st.markdown("#### 👤 Your Demographics")
-        gender = st.selectbox("**How do you identify?**", ["Female", "Male", "Non-binary", "Prefer not to say"])
+        st.markdown("#### 👤 פרטים אישיים")
+        gender = st.selectbox("**מגדר**", ["אישה", "גבר", "א-בינארי", "מעדיף/ה שלא לענות"])
         
         st.divider()
         
-        st.markdown("#### 👗 Your Fashion Expertise")
+        st.markdown("#### 👗 מומחיות באופנה")
         expertise = st.select_slider(
-            "**How well do you know fashion?**", 
+            "**עד כמה את/ה מבין/ה באופנה?**", 
             options=[
-                "1 - I just wear clothes", 
-                "2 - Casual interest", 
-                "3 - Pretty knowledgeable", 
-                "4 - Fashion enthusiast", 
-                "5 - Expert / Stylist"
+                "1 - אני פשוט מתלבש/ת", 
+                "2 - מתעניין/ת לפעמים", 
+                "3 - מבין/ה די טוב", 
+                "4 - חובב/ת אופנה", 
+                "5 - מומחה / סטייליסט/ית"
             ]
         )
         
         st.markdown("<br>", unsafe_allow_html=True)
-        submitted = st.form_submit_button("Start Evaluation ➡️", use_container_width=True)
+        submitted = st.form_submit_button("התחלת ההערכה ⬅️", use_container_width=True)
         
         if submitted:
-            st.session_state.user_gender = gender
+            # Map Hebrew input to English output for the Google Sheet
+            gender_mapping = {
+                "אישה": "Female",
+                "גבר": "Male",
+                "א-בינארי": "Non-binary",
+                "מעדיף/ה שלא לענות": "Prefer not to say"
+            }
+            
+            st.session_state.user_gender = gender_mapping[gender]
             st.session_state.user_expertise = int(expertise.split(" - ")[0])
             st.session_state.profile_set = True
             st.rerun() 
@@ -136,11 +158,9 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
         anchor_type = str(anchor_data.get("anchor_type", "top")).lower()
         anchor_img = str(anchor_data.get("img_url", ""))
         
-        # Shuffle candidates so we don't grab just positives if we limit them
         random.shuffle(raw_candidates)
         limited_candidates = raw_candidates[:max_candidates_per_anchor]
         
-        # FLATTEN THE LIST: Every candidate becomes its own independent task
         for c in limited_candidates:
             tasks.append({
                 "anchor_id": str(anchor_id),
@@ -155,7 +175,6 @@ def load_evaluation_data(json_path="survey_manifest.json", max_candidates_per_an
 
 base_tasks = load_evaluation_data()
 
-# Create a uniquely shuffled list of tasks for this specific user session
 if "session_tasks" not in st.session_state:
     user_tasks = list(base_tasks)
     random.shuffle(user_tasks)
@@ -164,13 +183,11 @@ if "session_tasks" not in st.session_state:
 # --- 4. SUBMISSION LOGIC ---
 def save_ratings_and_advance():
     step = st.session_state.current_step
-    # Read from the uniquely shuffled session list
     current_task = st.session_state.session_tasks[step]
     
     dynamic_key = f"step_{step}_rating"
     raw_rating = st.session_state.get(dynamic_key)
     
-    # If raw_rating is None (no stars given), human_score becomes 0
     human_score = (raw_rating + 1) if raw_rating is not None else 0 
     
     record = [
@@ -188,10 +205,9 @@ def save_ratings_and_advance():
         client = get_gspread_client()
         sheet_url = st.secrets["gcp_service_account"]["sheet_url"]
         sheet = client.open_by_url(sheet_url).sheet1
-        # append_rows expects a list of lists
         sheet.append_rows([record])
     except Exception as e:
-        st.error(f"Error saving to Google Sheets: {e}")
+        st.error(f"שגיאה בשמירה ל-Google Sheets: {e}")
         return 
     
     if dynamic_key in st.session_state:
@@ -200,43 +216,44 @@ def save_ratings_and_advance():
     st.session_state.current_step += 1
 
 # --- 5. UI LAYOUT ---
-st.title("Knit Pick: Fashion Compatibility")
+st.title("Knit Pick: התאמת אופנה")
 
 if st.session_state.current_step >= len(st.session_state.session_tasks):
-    st.success("You've completed all evaluations! Thank you for your help.")
+    st.success("סיימת את כל ההערכות! תודה רבה על העזרה.")
     st.balloons()
     st.stop()
 
-# Load the current task from the uniquely shuffled session list
 current_task = st.session_state.session_tasks[st.session_state.current_step]
 step = st.session_state.current_step
 
-# Determine which image is the top and which is the bottom
 is_top = "top" in current_task["anchor_type"].lower()
 top_img = current_task["anchor_img"] if is_top else current_task["candidate_img"]
 bottom_img = current_task["candidate_img"] if is_top else current_task["anchor_img"]
 
 progress = step / len(st.session_state.session_tasks)
-st.progress(progress, text=f"Outfit {step + 1} of {len(st.session_state.session_tasks)}")
 
-st.markdown("### How well does this outfit go together?")
-st.write("Rate the combination from 1 star (terrible match) to 5 stars (perfect outfit).")
+# Friendly message showing how many they've done and encouraging them
+progress_text = f"דירגתם עד כה: {step} שילובים | אפשר לעצור מתי שתרצו, אבל נשמח אם תדרגו כמה שיותר!"
+st.progress(progress, text=progress_text)
+
+st.markdown("### עד כמה השילוב הזה מתאים?")
+st.write("דרגו את השילוב מ-1 (ממש לא מתאים) עד 5 כוכבים (שילוב מושלם).")
 
 # Display exactly two columns side-by-side
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("**Top**")
+    st.markdown("**חלק עליון**")
     st.image(top_img, use_container_width=True)
 
 with col2:
-    st.markdown("**Bottom**")
+    st.markdown("**חלק תחתון**")
     st.image(bottom_img, use_container_width=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("**Rate this Outfit:**")
-# The dynamic key guarantees fresh stars on every page
+st.markdown("**דרגו את השילוב:**")
 st.feedback("stars", key=f"step_{step}_rating")
 
+st.markdown("<div style='clear: both; margin-bottom: 40px;'></div>", unsafe_allow_html=True)
 st.divider()
-st.button("Submit & Next Outfit ➡️", on_click=save_ratings_and_advance, type="primary", use_container_width=True)
+st.button("הגשה ולשילוב הבא ⬅️", on_click=save_ratings_and_advance, type="primary", use_container_width=True)
